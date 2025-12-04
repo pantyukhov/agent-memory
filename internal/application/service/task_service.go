@@ -67,9 +67,19 @@ func (s *TaskService) GetProject(ctx context.Context, id string) (*task.Project,
 	return s.repo.GetProject(ctx, projectID)
 }
 
-// ListProjects returns all projects.
-func (s *TaskService) ListProjects(ctx context.Context) ([]*task.Project, error) {
-	return s.repo.ListProjects(ctx)
+// ListProjectsRequest contains parameters for listing projects.
+type ListProjectsRequest struct {
+	Limit  int // Maximum items to return (0 = default 50)
+	Offset int // Items to skip
+}
+
+// ListProjects returns projects with pagination.
+func (s *TaskService) ListProjects(ctx context.Context, req ListProjectsRequest) (*task.ListResult[*task.Project], error) {
+	opts := task.ListOptions{
+		Limit:  req.Limit,
+		Offset: req.Offset,
+	}
+	return s.repo.ListProjects(ctx, opts)
 }
 
 // UpdateProjectRequest contains parameters for updating a project.
@@ -174,10 +184,23 @@ func (s *TaskService) GetTask(ctx context.Context, projectID, taskID string) (*t
 	return s.repo.GetTask(ctx, pid, tid)
 }
 
-// ListTasks returns all tasks for a project.
-func (s *TaskService) ListTasks(ctx context.Context, projectID string) ([]*task.Task, error) {
-	pid := task.NewProjectID(projectID)
-	return s.repo.ListTasks(ctx, pid)
+// ListTasksRequest contains parameters for listing tasks.
+type ListTasksRequest struct {
+	ProjectID string
+	Limit     int             // Maximum items to return (0 = default 50)
+	Offset    int             // Items to skip
+	Status    task.TaskStatus // Filter by status (empty = all)
+}
+
+// ListTasks returns tasks for a project with pagination.
+func (s *TaskService) ListTasks(ctx context.Context, req ListTasksRequest) (*task.ListResult[*task.Task], error) {
+	pid := task.NewProjectID(req.ProjectID)
+	opts := task.ListOptions{
+		Limit:  req.Limit,
+		Offset: req.Offset,
+		Status: req.Status,
+	}
+	return s.repo.ListTasks(ctx, pid, opts)
 }
 
 // UpdateTaskRequest contains parameters for updating a task.
@@ -287,11 +310,23 @@ func (s *TaskService) GetArtifact(ctx context.Context, projectID, taskID, artifa
 	return s.repo.GetArtifact(ctx, pid, tid, artifactID)
 }
 
-// ListArtifacts returns all artifacts for a task.
-func (s *TaskService) ListArtifacts(ctx context.Context, projectID, taskID string) ([]*task.Artifact, error) {
-	pid := task.NewProjectID(projectID)
-	tid := task.NewTaskID(taskID)
-	return s.repo.ListArtifacts(ctx, pid, tid)
+// ListArtifactsRequest contains parameters for listing artifacts.
+type ListArtifactsRequest struct {
+	ProjectID string
+	TaskID    string
+	Limit     int // Maximum items to return (0 = default 50)
+	Offset    int // Items to skip
+}
+
+// ListArtifacts returns artifacts for a task with pagination.
+func (s *TaskService) ListArtifacts(ctx context.Context, req ListArtifactsRequest) (*task.ListResult[*task.Artifact], error) {
+	pid := task.NewProjectID(req.ProjectID)
+	tid := task.NewTaskID(req.TaskID)
+	opts := task.ListOptions{
+		Limit:  req.Limit,
+		Offset: req.Offset,
+	}
+	return s.repo.ListArtifacts(ctx, pid, tid, opts)
 }
 
 // SearchArtifactsRequest contains parameters for searching artifacts.
@@ -299,10 +334,12 @@ type SearchArtifactsRequest struct {
 	Query     string
 	ProjectID string // Optional: limit search to specific project
 	TaskID    string // Optional: limit search to specific task
+	Limit     int    // Maximum items to return (0 = default 50)
+	Offset    int    // Items to skip
 }
 
-// SearchArtifacts searches artifact content.
-func (s *TaskService) SearchArtifacts(ctx context.Context, req SearchArtifactsRequest) ([]*task.Artifact, error) {
+// SearchArtifacts searches artifact content with pagination.
+func (s *TaskService) SearchArtifacts(ctx context.Context, req SearchArtifactsRequest) (*task.ListResult[*task.Artifact], error) {
 	var projectID *task.ProjectID
 	var taskID *task.TaskID
 
@@ -315,7 +352,12 @@ func (s *TaskService) SearchArtifacts(ctx context.Context, req SearchArtifactsRe
 		taskID = &tid
 	}
 
-	return s.repo.SearchArtifacts(ctx, req.Query, projectID, taskID)
+	opts := task.ListOptions{
+		Limit:  req.Limit,
+		Offset: req.Offset,
+	}
+
+	return s.repo.SearchArtifacts(ctx, req.Query, projectID, taskID, opts)
 }
 
 // DeleteArtifact removes an artifact.

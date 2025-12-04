@@ -107,6 +107,28 @@ const (
 	TaskStatusArchived   TaskStatus = "archived"
 )
 
+// StatusEmoji returns an emoji for the status (for visual display).
+func (s TaskStatus) StatusEmoji() string {
+	switch s {
+	case TaskStatusOpen:
+		return "📋"
+	case TaskStatusInProgress:
+		return "🔄"
+	case TaskStatusCompleted:
+		return "✅"
+	case TaskStatusArchived:
+		return "📦"
+	default:
+		return "📋"
+	}
+}
+
+// DirPrefix returns the directory prefix for kanban-style naming.
+// Example: [completed]-fix-login-bug
+func (t *Task) DirName() string {
+	return fmt.Sprintf("[%s]-%s", t.Status, t.ID)
+}
+
 // NewTask creates a new Task within a project.
 func NewTask(projectID ProjectID, id TaskID, name string) *Task {
 	now := time.Now().UTC()

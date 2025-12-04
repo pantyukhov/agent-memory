@@ -70,19 +70,43 @@ func (s *Server) handleGetProject(ctx context.Context, request mcp.CallToolReque
 }
 
 func (s *Server) handleListProjects(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projects, err := s.taskService.ListProjects(ctx)
+	args := request.GetArguments()
+
+	limit := 0
+	if limitRaw, ok := args["limit"]; ok {
+		if limitVal, ok := limitRaw.(float64); ok {
+			limit = int(limitVal)
+		}
+	}
+
+	offset := 0
+	if offsetRaw, ok := args["offset"]; ok {
+		if offsetVal, ok := offsetRaw.(float64); ok {
+			offset = int(offsetVal)
+		}
+	}
+
+	req := service.ListProjectsRequest{
+		Limit:  limit,
+		Offset: offset,
+	}
+
+	result, err := s.taskService.ListProjects(ctx, req)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to list projects: %v", err)), nil
 	}
 
-	projectMaps := make([]map[string]interface{}, 0, len(projects))
-	for _, p := range projects {
+	projectMaps := make([]map[string]interface{}, 0, len(result.Items))
+	for _, p := range result.Items {
 		projectMaps = append(projectMaps, projectToMap(p))
 	}
 
 	response := map[string]interface{}{
 		"projects": projectMaps,
-		"total":    len(projects),
+		"total":    result.Total,
+		"limit":    result.Limit,
+		"offset":   result.Offset,
+		"has_more": result.HasMore,
 	}
 
 	return jsonResult(response)
@@ -227,8 +251,37 @@ func (s *Server) handleGetTask(ctx context.Context, request mcp.CallToolRequest)
 
 func (s *Server) handleListTasks(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	projectID := request.GetString("project_id", "")
+	args := request.GetArguments()
 
-	tasks, err := s.taskService.ListTasks(ctx, projectID)
+	limit := 0
+	if limitRaw, ok := args["limit"]; ok {
+		if limitVal, ok := limitRaw.(float64); ok {
+			limit = int(limitVal)
+		}
+	}
+
+	offset := 0
+	if offsetRaw, ok := args["offset"]; ok {
+		if offsetVal, ok := offsetRaw.(float64); ok {
+			offset = int(offsetVal)
+		}
+	}
+
+	var status task.TaskStatus
+	if statusRaw, ok := args["status"]; ok {
+		if statusStr, ok := statusRaw.(string); ok {
+			status = task.TaskStatus(statusStr)
+		}
+	}
+
+	req := service.ListTasksRequest{
+		ProjectID: projectID,
+		Limit:     limit,
+		Offset:    offset,
+		Status:    status,
+	}
+
+	result, err := s.taskService.ListTasks(ctx, req)
 	if err != nil {
 		if err == task.ErrProjectNotFound {
 			return errorResult(fmt.Sprintf("Project '%s' not found", projectID)), nil
@@ -236,15 +289,18 @@ func (s *Server) handleListTasks(ctx context.Context, request mcp.CallToolReques
 		return errorResult(fmt.Sprintf("Failed to list tasks: %v", err)), nil
 	}
 
-	taskMaps := make([]map[string]interface{}, 0, len(tasks))
-	for _, t := range tasks {
+	taskMaps := make([]map[string]interface{}, 0, len(result.Items))
+	for _, t := range result.Items {
 		taskMaps = append(taskMaps, taskToMap(t))
 	}
 
 	response := map[string]interface{}{
 		"project_id": projectID,
 		"tasks":      taskMaps,
-		"total":      len(tasks),
+		"total":      result.Total,
+		"limit":      result.Limit,
+		"offset":     result.Offset,
+		"has_more":   result.HasMore,
 	}
 
 	return jsonResult(response)
@@ -406,8 +462,30 @@ func (s *Server) handleGetArtifact(ctx context.Context, request mcp.CallToolRequ
 func (s *Server) handleListArtifacts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	projectID := request.GetString("project_id", "")
 	taskID := request.GetString("task_id", "")
+	args := request.GetArguments()
 
-	artifacts, err := s.taskService.ListArtifacts(ctx, projectID, taskID)
+	limit := 0
+	if limitRaw, ok := args["limit"]; ok {
+		if limitVal, ok := limitRaw.(float64); ok {
+			limit = int(limitVal)
+		}
+	}
+
+	offset := 0
+	if offsetRaw, ok := args["offset"]; ok {
+		if offsetVal, ok := offsetRaw.(float64); ok {
+			offset = int(offsetVal)
+		}
+	}
+
+	req := service.ListArtifactsRequest{
+		ProjectID: projectID,
+		TaskID:    taskID,
+		Limit:     limit,
+		Offset:    offset,
+	}
+
+	result, err := s.taskService.ListArtifacts(ctx, req)
 	if err != nil {
 		if err == task.ErrProjectNotFound {
 			return errorResult(fmt.Sprintf("Project '%s' not found", projectID)), nil
@@ -418,8 +496,8 @@ func (s *Server) handleListArtifacts(ctx context.Context, request mcp.CallToolRe
 		return errorResult(fmt.Sprintf("Failed to list artifacts: %v", err)), nil
 	}
 
-	artifactMaps := make([]map[string]interface{}, 0, len(artifacts))
-	for _, a := range artifacts {
+	artifactMaps := make([]map[string]interface{}, 0, len(result.Items))
+	for _, a := range result.Items {
 		// Include preview of content
 		preview := a.Content
 		if len(preview) > 200 {
@@ -434,7 +512,10 @@ func (s *Server) handleListArtifacts(ctx context.Context, request mcp.CallToolRe
 		"project_id": projectID,
 		"task_id":    taskID,
 		"artifacts":  artifactMaps,
-		"total":      len(artifacts),
+		"total":      result.Total,
+		"limit":      result.Limit,
+		"offset":     result.Offset,
+		"has_more":   result.HasMore,
 	}
 
 	return jsonResult(response)
@@ -444,20 +525,37 @@ func (s *Server) handleSearchArtifacts(ctx context.Context, request mcp.CallTool
 	query := request.GetString("query", "")
 	projectID := request.GetString("project_id", "")
 	taskID := request.GetString("task_id", "")
+	args := request.GetArguments()
+
+	limit := 0
+	if limitRaw, ok := args["limit"]; ok {
+		if limitVal, ok := limitRaw.(float64); ok {
+			limit = int(limitVal)
+		}
+	}
+
+	offset := 0
+	if offsetRaw, ok := args["offset"]; ok {
+		if offsetVal, ok := offsetRaw.(float64); ok {
+			offset = int(offsetVal)
+		}
+	}
 
 	req := service.SearchArtifactsRequest{
 		Query:     query,
 		ProjectID: projectID,
 		TaskID:    taskID,
+		Limit:     limit,
+		Offset:    offset,
 	}
 
-	artifacts, err := s.taskService.SearchArtifacts(ctx, req)
+	result, err := s.taskService.SearchArtifacts(ctx, req)
 	if err != nil {
 		return errorResult(fmt.Sprintf("Failed to search artifacts: %v", err)), nil
 	}
 
-	artifactMaps := make([]map[string]interface{}, 0, len(artifacts))
-	for _, a := range artifacts {
+	artifactMaps := make([]map[string]interface{}, 0, len(result.Items))
+	for _, a := range result.Items {
 		// Include preview of content
 		preview := a.Content
 		if len(preview) > 200 {
@@ -471,7 +569,10 @@ func (s *Server) handleSearchArtifacts(ctx context.Context, request mcp.CallTool
 	response := map[string]interface{}{
 		"query":     query,
 		"artifacts": artifactMaps,
-		"total":     len(artifacts),
+		"total":     result.Total,
+		"limit":     result.Limit,
+		"offset":    result.Offset,
+		"has_more":  result.HasMore,
 	}
 
 	return jsonResult(response)

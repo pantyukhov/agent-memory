@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -25,9 +26,9 @@ const (
 //
 //	/base_path/
 //	  /project-id/
-//	    project.json           (project metadata)
-//	    /task-id/
-//	      task.json            (task metadata)
+//	    project.json                    (project metadata)
+//	    /[status]-task-id/              (kanban-style naming)
+//	      task.json                     (task metadata)
 //	      /artifacts/
 //	        note.1234567890.md
 //	        code.1234567891.md
@@ -77,8 +78,8 @@ func (r *Repository) GetProject(ctx context.Context, id task.ProjectID) (*task.P
 	return r.loadProjectMetadata(id)
 }
 
-// ListProjects returns all projects.
-func (r *Repository) ListProjects(ctx context.Context) ([]*task.Project, error) {
+// ListProjects returns projects with pagination.
+func (r *Repository) ListProjects(ctx context.Context, opts task.ListOptions) (*task.ListResult[*task.Project], error) {
 	entries, err := os.ReadDir(r.basePath)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", task.ErrStorageFailed, err)
@@ -103,7 +104,7 @@ func (r *Repository) ListProjects(ctx context.Context) ([]*task.Project, error) 
 		return projects[i].UpdatedAt.After(projects[j].UpdatedAt)
 	})
 
-	return projects, nil
+	return applyPagination(projects, opts), nil
 }
 
 // UpdateProject updates project metadata.
@@ -145,14 +146,14 @@ func (r *Repository) CreateTask(ctx context.Context, t *task.Task) error {
 		return task.ErrProjectNotFound
 	}
 
-	taskDir := r.taskPath(t.ProjectID, t.ID)
-
-	// Check if task already exists
-	if _, err := os.Stat(taskDir); err == nil {
+	// Check if task already exists (any status)
+	if existing := r.findTaskDir(t.ProjectID, t.ID); existing != "" {
 		return task.ErrTaskAlreadyExists
 	}
 
-	// Create task directory
+	taskDir := r.taskDirPath(t.ProjectID, t)
+
+	// Create task directory with kanban-style name
 	if err := os.MkdirAll(taskDir, 0755); err != nil {
 		return fmt.Errorf("%w: %v", task.ErrStorageFailed, err)
 	}
@@ -169,18 +170,16 @@ func (r *Repository) CreateTask(ctx context.Context, t *task.Task) error {
 
 // GetTask retrieves a task by project ID and task ID.
 func (r *Repository) GetTask(ctx context.Context, projectID task.ProjectID, taskID task.TaskID) (*task.Task, error) {
-	taskDir := r.taskPath(projectID, taskID)
-
-	// Check if task exists
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
+	taskDir := r.findTaskDir(projectID, taskID)
+	if taskDir == "" {
 		return nil, task.ErrTaskNotFound
 	}
 
-	return r.loadTaskMetadata(projectID, taskID)
+	return r.loadTaskMetadataFromDir(taskDir)
 }
 
-// ListTasks returns all tasks for a project.
-func (r *Repository) ListTasks(ctx context.Context, projectID task.ProjectID) ([]*task.Task, error) {
+// ListTasks returns tasks for a project with pagination.
+func (r *Repository) ListTasks(ctx context.Context, projectID task.ProjectID, opts task.ListOptions) (*task.ListResult[*task.Task], error) {
 	projectDir := r.projectPath(projectID)
 
 	// Check if project exists
@@ -199,18 +198,23 @@ func (r *Repository) ListTasks(ctx context.Context, projectID task.ProjectID) ([
 			continue
 		}
 
-		// Skip if it's not a task directory (check for task.json)
-		taskID := task.TaskID(entry.Name())
-		taskDir := r.taskPath(projectID, taskID)
+		// Parse kanban-style directory name: [status]-task-id
+		taskDir := filepath.Join(projectDir, entry.Name())
 		metadataPath := filepath.Join(taskDir, taskMetadataFile)
 		if _, err := os.Stat(metadataPath); os.IsNotExist(err) {
 			continue
 		}
 
-		t, err := r.loadTaskMetadata(projectID, taskID)
+		t, err := r.loadTaskMetadataFromDir(taskDir)
 		if err != nil {
 			continue // Skip invalid tasks
 		}
+
+		// Apply status filter if specified
+		if opts.Status != "" && t.Status != opts.Status {
+			continue
+		}
+
 		tasks = append(tasks, t)
 	}
 
@@ -219,28 +223,33 @@ func (r *Repository) ListTasks(ctx context.Context, projectID task.ProjectID) ([
 		return tasks[i].UpdatedAt.After(tasks[j].UpdatedAt)
 	})
 
-	return tasks, nil
+	return applyPagination(tasks, opts), nil
 }
 
-// UpdateTask updates task metadata.
+// UpdateTask updates task metadata and renames directory if status changed.
 func (r *Repository) UpdateTask(ctx context.Context, t *task.Task) error {
-	taskDir := r.taskPath(t.ProjectID, t.ID)
-
-	// Check if task exists
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
+	oldDir := r.findTaskDir(t.ProjectID, t.ID)
+	if oldDir == "" {
 		return task.ErrTaskNotFound
 	}
 
 	t.UpdatedAt = time.Now().UTC()
-	return r.saveTaskMetadata(t)
+
+	// Check if we need to rename directory (status changed)
+	newDir := r.taskDirPath(t.ProjectID, t)
+	if oldDir != newDir {
+		if err := os.Rename(oldDir, newDir); err != nil {
+			return fmt.Errorf("%w: failed to rename task directory: %v", task.ErrStorageFailed, err)
+		}
+	}
+
+	return r.saveTaskMetadataToDir(newDir, t)
 }
 
 // DeleteTask removes a task and all its artifacts.
 func (r *Repository) DeleteTask(ctx context.Context, projectID task.ProjectID, taskID task.TaskID) error {
-	taskDir := r.taskPath(projectID, taskID)
-
-	// Check if task exists
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
+	taskDir := r.findTaskDir(projectID, taskID)
+	if taskDir == "" {
 		return task.ErrTaskNotFound
 	}
 
@@ -255,10 +264,8 @@ func (r *Repository) DeleteTask(ctx context.Context, projectID task.ProjectID, t
 
 // SaveArtifact saves an artifact to a task.
 func (r *Repository) SaveArtifact(ctx context.Context, a *task.Artifact) error {
-	taskDir := r.taskPath(a.ProjectID, a.TaskID)
-
-	// Check if task exists
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
+	taskDir := r.findTaskDir(a.ProjectID, a.TaskID)
+	if taskDir == "" {
 		return task.ErrTaskNotFound
 	}
 
@@ -279,10 +286,10 @@ func (r *Repository) SaveArtifact(ctx context.Context, a *task.Artifact) error {
 	}
 
 	// Update task's updated_at
-	t, err := r.loadTaskMetadata(a.ProjectID, a.TaskID)
+	t, err := r.loadTaskMetadataFromDir(taskDir)
 	if err == nil {
 		t.UpdatedAt = time.Now().UTC()
-		r.saveTaskMetadata(t)
+		r.saveTaskMetadataToDir(taskDir, t)
 	}
 
 	return nil
@@ -290,12 +297,12 @@ func (r *Repository) SaveArtifact(ctx context.Context, a *task.Artifact) error {
 
 // GetArtifact retrieves an artifact by project ID, task ID, and artifact ID.
 func (r *Repository) GetArtifact(ctx context.Context, projectID task.ProjectID, taskID task.TaskID, artifactID string) (*task.Artifact, error) {
-	artifacts, err := r.ListArtifacts(ctx, projectID, taskID)
+	result, err := r.ListArtifacts(ctx, projectID, taskID, task.ListOptions{Limit: 0})
 	if err != nil {
 		return nil, err
 	}
 
-	for _, a := range artifacts {
+	for _, a := range result.Items {
 		if a.ID == artifactID {
 			return a, nil
 		}
@@ -304,20 +311,24 @@ func (r *Repository) GetArtifact(ctx context.Context, projectID task.ProjectID, 
 	return nil, task.ErrArtifactNotFound
 }
 
-// ListArtifacts returns all artifacts for a task.
-func (r *Repository) ListArtifacts(ctx context.Context, projectID task.ProjectID, taskID task.TaskID) ([]*task.Artifact, error) {
-	taskDir := r.taskPath(projectID, taskID)
-	artifactsPath := filepath.Join(taskDir, artifactsDir)
-
-	// Check if task exists
-	if _, err := os.Stat(taskDir); os.IsNotExist(err) {
+// ListArtifacts returns artifacts for a task with pagination.
+func (r *Repository) ListArtifacts(ctx context.Context, projectID task.ProjectID, taskID task.TaskID, opts task.ListOptions) (*task.ListResult[*task.Artifact], error) {
+	taskDir := r.findTaskDir(projectID, taskID)
+	if taskDir == "" {
 		return nil, task.ErrTaskNotFound
 	}
 
+	artifactsPath := filepath.Join(taskDir, artifactsDir)
 	entries, err := os.ReadDir(artifactsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []*task.Artifact{}, nil
+			return &task.ListResult[*task.Artifact]{
+				Items:   []*task.Artifact{},
+				Total:   0,
+				Limit:   opts.Limit,
+				Offset:  opts.Offset,
+				HasMore: false,
+			}, nil
 		}
 		return nil, fmt.Errorf("%w: %v", task.ErrStorageFailed, err)
 	}
@@ -328,7 +339,7 @@ func (r *Repository) ListArtifacts(ctx context.Context, projectID task.ProjectID
 			continue
 		}
 
-		a, err := r.loadArtifact(projectID, taskID, entry.Name())
+		a, err := r.loadArtifact(projectID, taskID, taskDir, entry.Name())
 		if err != nil {
 			continue // Skip invalid artifacts
 		}
@@ -340,11 +351,11 @@ func (r *Repository) ListArtifacts(ctx context.Context, projectID task.ProjectID
 		return artifacts[i].CreatedAt.After(artifacts[j].CreatedAt)
 	})
 
-	return artifacts, nil
+	return applyPagination(artifacts, opts), nil
 }
 
 // SearchArtifacts searches artifact content across all projects/tasks or specific project/task.
-func (r *Repository) SearchArtifacts(ctx context.Context, query string, projectID *task.ProjectID, taskID *task.TaskID) ([]*task.Artifact, error) {
+func (r *Repository) SearchArtifacts(ctx context.Context, query string, projectID *task.ProjectID, taskID *task.TaskID, opts task.ListOptions) (*task.ListResult[*task.Artifact], error) {
 	queryLower := strings.ToLower(query)
 	var results []*task.Artifact
 
@@ -353,11 +364,11 @@ func (r *Repository) SearchArtifacts(ctx context.Context, query string, projectI
 	if projectID != nil {
 		projectIDs = []task.ProjectID{*projectID}
 	} else {
-		projects, err := r.ListProjects(ctx)
+		projectsResult, err := r.ListProjects(ctx, task.ListOptions{Limit: 0})
 		if err != nil {
 			return nil, err
 		}
-		for _, p := range projects {
+		for _, p := range projectsResult.Items {
 			projectIDs = append(projectIDs, p.ID)
 		}
 	}
@@ -368,22 +379,22 @@ func (r *Repository) SearchArtifacts(ctx context.Context, query string, projectI
 		if taskID != nil && projectID != nil {
 			taskIDs = []task.TaskID{*taskID}
 		} else {
-			tasks, err := r.ListTasks(ctx, pid)
+			tasksResult, err := r.ListTasks(ctx, pid, task.ListOptions{Limit: 0})
 			if err != nil {
 				continue
 			}
-			for _, t := range tasks {
+			for _, t := range tasksResult.Items {
 				taskIDs = append(taskIDs, t.ID)
 			}
 		}
 
 		for _, tid := range taskIDs {
-			artifacts, err := r.ListArtifacts(ctx, pid, tid)
+			artifactsResult, err := r.ListArtifacts(ctx, pid, tid, task.ListOptions{Limit: 0})
 			if err != nil {
 				continue
 			}
 
-			for _, a := range artifacts {
+			for _, a := range artifactsResult.Items {
 				if strings.Contains(strings.ToLower(a.Content), queryLower) {
 					results = append(results, a)
 				}
@@ -391,19 +402,24 @@ func (r *Repository) SearchArtifacts(ctx context.Context, query string, projectI
 		}
 	}
 
-	return results, nil
+	return applyPagination(results, opts), nil
 }
 
 // DeleteArtifact removes an artifact.
 func (r *Repository) DeleteArtifact(ctx context.Context, projectID task.ProjectID, taskID task.TaskID, artifactID string) error {
-	artifacts, err := r.ListArtifacts(ctx, projectID, taskID)
+	taskDir := r.findTaskDir(projectID, taskID)
+	if taskDir == "" {
+		return task.ErrTaskNotFound
+	}
+
+	artifactsResult, err := r.ListArtifacts(ctx, projectID, taskID, task.ListOptions{Limit: 0})
 	if err != nil {
 		return err
 	}
 
-	for _, a := range artifacts {
+	for _, a := range artifactsResult.Items {
 		if a.ID == artifactID {
-			artifactsPath := filepath.Join(r.taskPath(projectID, taskID), artifactsDir)
+			artifactsPath := filepath.Join(taskDir, artifactsDir)
 			filePath := filepath.Join(artifactsPath, a.Filename())
 
 			if err := os.Remove(filePath); err != nil {
@@ -427,8 +443,41 @@ func (r *Repository) projectPath(id task.ProjectID) string {
 	return filepath.Join(r.basePath, id.String())
 }
 
-func (r *Repository) taskPath(projectID task.ProjectID, taskID task.TaskID) string {
-	return filepath.Join(r.basePath, projectID.String(), taskID.String())
+// taskDirPath returns the path for a task directory using kanban-style naming.
+func (r *Repository) taskDirPath(projectID task.ProjectID, t *task.Task) string {
+	return filepath.Join(r.basePath, projectID.String(), t.DirName())
+}
+
+// findTaskDir finds the actual directory for a task (handling different statuses).
+// Returns empty string if not found.
+func (r *Repository) findTaskDir(projectID task.ProjectID, taskID task.TaskID) string {
+	projectDir := r.projectPath(projectID)
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return ""
+	}
+
+	// Pattern: [status]-taskid
+	pattern := regexp.MustCompile(`^\[([a-z_]+)\]-(.+)$`)
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		matches := pattern.FindStringSubmatch(name)
+		if matches != nil && task.TaskID(matches[2]) == taskID {
+			return filepath.Join(projectDir, name)
+		}
+
+		// Also check for legacy directories without status prefix
+		if task.TaskID(name) == taskID {
+			return filepath.Join(projectDir, name)
+		}
+	}
+
+	return ""
 }
 
 func (r *Repository) saveProjectMetadata(p *task.Project) error {
@@ -475,7 +524,11 @@ func (r *Repository) loadProjectMetadata(id task.ProjectID) (*task.Project, erro
 }
 
 func (r *Repository) saveTaskMetadata(t *task.Task) error {
-	taskDir := r.taskPath(t.ProjectID, t.ID)
+	taskDir := r.taskDirPath(t.ProjectID, t)
+	return r.saveTaskMetadataToDir(taskDir, t)
+}
+
+func (r *Repository) saveTaskMetadataToDir(taskDir string, t *task.Task) error {
 	metadataPath := filepath.Join(taskDir, taskMetadataFile)
 
 	data, err := json.MarshalIndent(t, "", "  ")
@@ -490,19 +543,34 @@ func (r *Repository) saveTaskMetadata(t *task.Task) error {
 	return nil
 }
 
-func (r *Repository) loadTaskMetadata(projectID task.ProjectID, taskID task.TaskID) (*task.Task, error) {
-	taskDir := r.taskPath(projectID, taskID)
+func (r *Repository) loadTaskMetadataFromDir(taskDir string) (*task.Task, error) {
 	metadataPath := filepath.Join(taskDir, taskMetadataFile)
 
 	data, err := os.ReadFile(metadataPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Create default task metadata for legacy directories
+			// Try to extract task ID from directory name
+			dirName := filepath.Base(taskDir)
+			pattern := regexp.MustCompile(`^\[([a-z_]+)\]-(.+)$`)
+			matches := pattern.FindStringSubmatch(dirName)
+
+			var taskID task.TaskID
+			var status task.TaskStatus = task.TaskStatusOpen
+			if matches != nil {
+				status = task.TaskStatus(matches[1])
+				taskID = task.TaskID(matches[2])
+			} else {
+				taskID = task.TaskID(dirName)
+			}
+
+			// Extract project ID from parent directory
+			projectID := task.ProjectID(filepath.Base(filepath.Dir(taskDir)))
+
 			return &task.Task{
 				ID:        taskID,
 				ProjectID: projectID,
 				Name:      taskID.String(),
-				Status:    task.TaskStatusOpen,
+				Status:    status,
 				Metadata:  make(map[string]string),
 				CreatedAt: time.Now().UTC(),
 				UpdatedAt: time.Now().UTC(),
@@ -543,8 +611,8 @@ func (r *Repository) buildArtifactMarkdown(a *task.Artifact) string {
 	return sb.String()
 }
 
-func (r *Repository) loadArtifact(projectID task.ProjectID, taskID task.TaskID, filename string) (*task.Artifact, error) {
-	artifactsPath := filepath.Join(r.taskPath(projectID, taskID), artifactsDir)
+func (r *Repository) loadArtifact(projectID task.ProjectID, taskID task.TaskID, taskDir, filename string) (*task.Artifact, error) {
+	artifactsPath := filepath.Join(taskDir, artifactsDir)
 	filePath := filepath.Join(artifactsPath, filename)
 
 	data, err := os.ReadFile(filePath)
@@ -587,4 +655,47 @@ func (r *Repository) loadArtifact(projectID task.ProjectID, taskID task.TaskID, 
 		Metadata:  make(map[string]string),
 		CreatedAt: createdAt,
 	}, nil
+}
+
+// applyPagination applies pagination options to a slice and returns ListResult.
+func applyPagination[T any](items []T, opts task.ListOptions) *task.ListResult[T] {
+	total := len(items)
+
+	// Apply default limit if not specified
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Apply offset
+	if offset >= total {
+		return &task.ListResult[T]{
+			Items:   []T{},
+			Total:   total,
+			Limit:   limit,
+			Offset:  offset,
+			HasMore: false,
+		}
+	}
+
+	items = items[offset:]
+
+	// Apply limit
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+	}
+
+	return &task.ListResult[T]{
+		Items:   items,
+		Total:   total,
+		Limit:   limit,
+		Offset:  offset,
+		HasMore: hasMore,
+	}
 }
