@@ -1,0 +1,22 @@
+# Agent Memory MCP Server Configuration
+# Copy this file to one of the following locations:
+#   - ./agent-memory.yaml (current directory)
+#   - ~/.agent-memory/config.yaml (home directory)
+#   - /etc/agent-memory/config.yaml (system-wide)
+
+# Path to the tasks directory where projects, tasks, and artifacts are stored.
+# Supports ~ for home directory expansion.
+# Default: ~/.agent-memory/tasks
+tasks_path: "~/.agent-memory/tasks"
+
+# Logging level: debug, info, warn, error
+# Default: info
+log_level: info
+
+# MCP Server configuration
+server:
+  # Server name exposed via MCP protocol
+  name: agent-memory
+
+  # Server version
+  version: "1.0.0"

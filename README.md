@@ -108,6 +108,24 @@ Add to Cursor's MCP configuration:
 }
 ```
 
+### Configure Your Project's CLAUDE.md
+
+Add this to your project's `CLAUDE.md` to enable automatic context persistence:
+
+```markdown
+## Agent Memory
+
+Save task context to agent-memory MCP for session persistence.
+
+**Start:** `list_projects()` → `list_tasks(project_id)` → `list_artifacts(project_id, task_id)`
+
+**Work:** `create_project(id, workspace_path)` → `create_task(project_id, id)` → `save_artifact(project_id, task_id, content, type)`
+
+**Types:** note, code, decision, reference
+
+Save progress frequently: findings, decisions, blockers, patterns.
+```
+
 ## MCP Tools
 
 ### Project Management
@@ -127,6 +145,7 @@ Add to Cursor's MCP configuration:
 | `create_task` | Create a task within a project |
 | `get_task` | Retrieve task details |
 | `list_tasks` | List project tasks |
+| `list_all_tasks` | List tasks from ALL projects |
 | `update_task` | Modify task |
 | `delete_task` | Delete task and all artifacts |
 

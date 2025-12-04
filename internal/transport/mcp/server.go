@@ -55,6 +55,7 @@ func (s *Server) registerTools() {
 	s.registerCreateTask()
 	s.registerGetTask()
 	s.registerListTasks()
+	s.registerListAllTasks()
 	s.registerUpdateTask()
 	s.registerDeleteTask()
 
@@ -247,6 +248,31 @@ NOTE: Task directories use kanban-style naming like [completed]-fix-login-bug fo
 	)
 
 	s.mcpServer.AddTool(tool, s.handleListTasks)
+}
+
+func (s *Server) registerListAllTasks() {
+	tool := mcp.NewTool("list_all_tasks",
+		mcp.WithDescription(`List all tasks from ALL projects, sorted by most recently updated.
+
+Use this to get a global view of all work across all projects. Helpful for:
+- Finding recent work across multiple projects
+- Getting an overview of all ongoing tasks
+- Discovering tasks you may have forgotten about
+
+FILTERING: Use status parameter to filter by task status (open, in_progress, completed, archived).
+PAGINATION: Use limit/offset for large task lists. Response includes total count and has_more flag.`),
+		mcp.WithString("status",
+			mcp.Description("Filter by status: 'open', 'in_progress', 'completed', 'archived'. Empty = all."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of tasks to return (default: 50)."),
+		),
+		mcp.WithNumber("offset",
+			mcp.Description("Number of tasks to skip for pagination (default: 0)."),
+		),
+	)
+
+	s.mcpServer.AddTool(tool, s.handleListAllTasks)
 }
 
 func (s *Server) registerUpdateTask() {

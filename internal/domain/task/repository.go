@@ -50,6 +50,9 @@ type Repository interface {
 	// ListTasks returns tasks for a project with pagination.
 	ListTasks(ctx context.Context, projectID ProjectID, opts ListOptions) (*ListResult[*Task], error)
 
+	// ListAllTasks returns tasks from all projects with pagination.
+	ListAllTasks(ctx context.Context, opts ListOptions) (*ListResult[*Task], error)
+
 	// UpdateTask updates task metadata.
 	UpdateTask(ctx context.Context, task *Task) error
 

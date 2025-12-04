@@ -306,6 +306,57 @@ func (s *Server) handleListTasks(ctx context.Context, request mcp.CallToolReques
 	return jsonResult(response)
 }
 
+func (s *Server) handleListAllTasks(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+
+	limit := 0
+	if limitRaw, ok := args["limit"]; ok {
+		if limitVal, ok := limitRaw.(float64); ok {
+			limit = int(limitVal)
+		}
+	}
+
+	offset := 0
+	if offsetRaw, ok := args["offset"]; ok {
+		if offsetVal, ok := offsetRaw.(float64); ok {
+			offset = int(offsetVal)
+		}
+	}
+
+	var status task.TaskStatus
+	if statusRaw, ok := args["status"]; ok {
+		if statusStr, ok := statusRaw.(string); ok {
+			status = task.TaskStatus(statusStr)
+		}
+	}
+
+	req := service.ListAllTasksRequest{
+		Limit:  limit,
+		Offset: offset,
+		Status: status,
+	}
+
+	result, err := s.taskService.ListAllTasks(ctx, req)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Failed to list all tasks: %v", err)), nil
+	}
+
+	taskMaps := make([]map[string]interface{}, 0, len(result.Items))
+	for _, t := range result.Items {
+		taskMaps = append(taskMaps, taskToMap(t))
+	}
+
+	response := map[string]interface{}{
+		"tasks":    taskMaps,
+		"total":    result.Total,
+		"limit":    result.Limit,
+		"offset":   result.Offset,
+		"has_more": result.HasMore,
+	}
+
+	return jsonResult(response)
+}
+
 func (s *Server) handleUpdateTask(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	projectID := request.GetString("project_id", "")
 	taskID := request.GetString("task_id", "")

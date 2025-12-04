@@ -13,6 +13,7 @@ GOTEST=$(GOCMD) test
 GOMOD=$(GOCMD) mod
 
 # Build flags
+
 LDFLAGS=-ldflags "-s -w"
 
 # Default target

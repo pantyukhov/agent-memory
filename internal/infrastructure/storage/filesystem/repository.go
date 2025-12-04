@@ -226,6 +226,32 @@ func (r *Repository) ListTasks(ctx context.Context, projectID task.ProjectID, op
 	return applyPagination(tasks, opts), nil
 }
 
+// ListAllTasks returns tasks from all projects with pagination.
+func (r *Repository) ListAllTasks(ctx context.Context, opts task.ListOptions) (*task.ListResult[*task.Task], error) {
+	// Get all projects first
+	projectsResult, err := r.ListProjects(ctx, task.ListOptions{Limit: 0})
+	if err != nil {
+		return nil, err
+	}
+
+	var allTasks []*task.Task
+	for _, p := range projectsResult.Items {
+		// List tasks for each project (without pagination to collect all)
+		tasksResult, err := r.ListTasks(ctx, p.ID, task.ListOptions{Limit: 0, Status: opts.Status})
+		if err != nil {
+			continue // Skip projects with errors
+		}
+		allTasks = append(allTasks, tasksResult.Items...)
+	}
+
+	// Sort by updated time, newest first
+	sort.Slice(allTasks, func(i, j int) bool {
+		return allTasks[i].UpdatedAt.After(allTasks[j].UpdatedAt)
+	})
+
+	return applyPagination(allTasks, opts), nil
+}
+
 // UpdateTask updates task metadata and renames directory if status changed.
 func (r *Repository) UpdateTask(ctx context.Context, t *task.Task) error {
 	oldDir := r.findTaskDir(t.ProjectID, t.ID)

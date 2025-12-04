@@ -203,6 +203,23 @@ func (s *TaskService) ListTasks(ctx context.Context, req ListTasksRequest) (*tas
 	return s.repo.ListTasks(ctx, pid, opts)
 }
 
+// ListAllTasksRequest contains parameters for listing all tasks across projects.
+type ListAllTasksRequest struct {
+	Limit  int             // Maximum items to return (0 = default 50)
+	Offset int             // Items to skip
+	Status task.TaskStatus // Filter by status (empty = all)
+}
+
+// ListAllTasks returns tasks from all projects with pagination.
+func (s *TaskService) ListAllTasks(ctx context.Context, req ListAllTasksRequest) (*task.ListResult[*task.Task], error) {
+	opts := task.ListOptions{
+		Limit:  req.Limit,
+		Offset: req.Offset,
+		Status: req.Status,
+	}
+	return s.repo.ListAllTasks(ctx, opts)
+}
+
 // UpdateTaskRequest contains parameters for updating a task.
 type UpdateTaskRequest struct {
 	ProjectID     string
