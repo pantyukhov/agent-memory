@@ -56,7 +56,7 @@ jobs:
           if [ "${{ matrix.os }}" = "windows" ]; then
             BINARY_NAME="${BINARY_NAME}.exe"
           fi
-          go build -ldflags="-s -w" -o "dist/${BINARY_NAME}" ./cmd/server
+          go build -ldflags="-s -w" -o "dist/${BINARY_NAME}" ./cmd/mcp
           echo "Built binary:"
           ls -la dist/
 

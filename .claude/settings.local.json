@@ -9,7 +9,8 @@
       "Bash(go build:*)",
       "Bash(./build/agent-memory:*)",
       "Bash(go mod tidy:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(mkdir:*)"
     ],
     "deny": [],
     "ask": []
