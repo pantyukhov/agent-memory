@@ -184,8 +184,9 @@ func NewArtifact(projectID ProjectID, taskID TaskID, artifactType ArtifactType, 
 }
 
 // Filename returns the filename for this artifact.
+// Uses the ID (which is the Unix nano timestamp) for uniqueness.
 func (a *Artifact) Filename() string {
-	return fmt.Sprintf("%s.%d.md", a.Type, a.CreatedAt.Unix())
+	return fmt.Sprintf("%s.%s.md", a.Type, a.ID)
 }
 
 func generateArtifactID(t time.Time) string {

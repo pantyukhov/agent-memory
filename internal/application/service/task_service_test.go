@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"agent-memory/internal/domain/task"
 	"agent-memory/internal/infrastructure/storage/filesystem"
@@ -627,7 +628,7 @@ func TestTaskService_ListArtifacts(t *testing.T) {
 	}
 	svc.CreateTask(ctx, taskReq)
 
-	// Create artifacts
+	// Create artifacts with delays to ensure different timestamps
 	for i := 0; i < 5; i++ {
 		artifactReq := SaveArtifactRequest{
 			ProjectID: "test-project",
@@ -636,6 +637,7 @@ func TestTaskService_ListArtifacts(t *testing.T) {
 			Content:   "Note content",
 		}
 		svc.SaveArtifact(ctx, artifactReq)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	// List artifacts
@@ -670,7 +672,7 @@ func TestTaskService_SearchArtifacts(t *testing.T) {
 	}
 	svc.CreateTask(ctx, taskReq)
 
-	// Create artifacts with different content
+	// Create artifacts with different content (with delay for unique timestamps)
 	artifactReq1 := SaveArtifactRequest{
 		ProjectID: "test-project",
 		TaskID:    "fix-bug",
@@ -678,6 +680,8 @@ func TestTaskService_SearchArtifacts(t *testing.T) {
 		Content:   "Authentication error found",
 	}
 	svc.SaveArtifact(ctx, artifactReq1)
+
+	time.Sleep(10 * time.Millisecond)
 
 	artifactReq2 := SaveArtifactRequest{
 		ProjectID: "test-project",

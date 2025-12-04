@@ -181,15 +181,21 @@ func (s *WorkspaceService) ListFiles(ctx context.Context, req ListFilesRequest) 
 		maxDepth = 10 // Default max depth
 	}
 
-	baseDepth := strings.Count(basePath, string(os.PathSeparator))
-
 	err = filepath.WalkDir(basePath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // Skip errors
 		}
 
-		// Check depth
-		currentDepth := strings.Count(path, string(os.PathSeparator)) - baseDepth
+		// Get relative path first
+		relPath, _ := filepath.Rel(basePath, path)
+		if relPath == "." {
+			return nil // Skip the base directory itself
+		}
+
+		// Calculate depth from relative path (number of path separators)
+		currentDepth := strings.Count(relPath, string(os.PathSeparator))
+
+		// Check depth for non-recursive mode
 		if !req.Recursive && currentDepth > 0 {
 			if d.IsDir() {
 				return filepath.SkipDir
@@ -221,10 +227,6 @@ func (s *WorkspaceService) ListFiles(ctx context.Context, req ListFilesRequest) 
 		}
 
 		info, _ := d.Info()
-		relPath, _ := filepath.Rel(basePath, path)
-		if relPath == "." {
-			return nil
-		}
 
 		var size int64
 		var modTime string

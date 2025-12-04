@@ -622,20 +622,21 @@ func (r *Repository) loadArtifact(projectID task.ProjectID, taskID task.TaskID, 
 
 	content := string(data)
 
-	// Parse filename to extract type and timestamp
-	// Format: type.timestamp.md
+	// Parse filename to extract type and timestamp (nanoseconds)
+	// Format: type.timestamp_nano.md
 	parts := strings.Split(strings.TrimSuffix(filename, ".md"), ".")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid artifact filename: %s", filename)
 	}
 
 	artifactType := task.ArtifactType(parts[0])
-	timestamp, err := strconv.ParseInt(parts[1], 10, 64)
+	timestampNano, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("invalid timestamp in filename: %s", filename)
 	}
 
-	createdAt := time.Unix(timestamp, 0).UTC()
+	// Convert nanoseconds to time
+	createdAt := time.Unix(0, timestampNano).UTC()
 
 	// Extract content from markdown (skip frontmatter)
 	actualContent := content
@@ -647,7 +648,7 @@ func (r *Repository) loadArtifact(projectID task.ProjectID, taskID task.TaskID, 
 	}
 
 	return &task.Artifact{
-		ID:        fmt.Sprintf("%d", timestamp),
+		ID:        fmt.Sprintf("%d", timestampNano),
 		ProjectID: projectID,
 		TaskID:    taskID,
 		Type:      artifactType,

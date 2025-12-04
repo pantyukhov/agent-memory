@@ -45,13 +45,7 @@ func setupTestServer(t *testing.T) (*Server, func()) {
 
 func createCallToolRequest(name string, args map[string]interface{}) mcp.CallToolRequest {
 	return mcp.CallToolRequest{
-		Params: struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments,omitempty"`
-			Meta      *struct {
-				ProgressToken mcp.ProgressToken `json:"progressToken,omitempty"`
-			} `json:"_meta,omitempty"`
-		}{
+		Params: mcp.CallToolParams{
 			Name:      name,
 			Arguments: args,
 		},

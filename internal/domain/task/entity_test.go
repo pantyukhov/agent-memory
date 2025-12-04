@@ -2,7 +2,6 @@ package task
 
 import (
 	"testing"
-	"time"
 )
 
 func TestNewProjectID(t *testing.T) {
@@ -340,13 +339,13 @@ func TestNewArtifact(t *testing.T) {
 }
 
 func TestArtifact_Filename(t *testing.T) {
-	timestamp := time.Unix(1733312000, 0)
+	// ID is now the nanosecond timestamp, filename uses the ID
 	artifact := &Artifact{
-		Type:      ArtifactTypeNote,
-		CreatedAt: timestamp,
+		ID:   "1733312000123456789",
+		Type: ArtifactTypeNote,
 	}
 
-	expected := "note.1733312000.md"
+	expected := "note.1733312000123456789.md"
 	got := artifact.Filename()
 
 	if got != expected {
